@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { slide } from 'svelte/transition';
+	import { slide, fade } from 'svelte/transition';
 	import { flip } from 'svelte/animate';
 	import { quintOut } from 'svelte/easing';
 	import { onMount } from 'svelte';
@@ -21,6 +21,7 @@
 	import ConnectionScreen from '$lib/components/ConnectionScreen.svelte';
 	import type { Session } from '$lib/types';
 	import { SessionStatus } from '$lib/types';
+	import SessionHistory from '$lib/components/SessionHistory.svelte';
 
 	let demoActive = $derived($isDemoMode);
 	let showQRModal = $state(false);
@@ -36,6 +37,14 @@
 
 	let isCompact = $state(false);
 
+	let activeTab = $state<'monitor' | 'history'>('monitor');
+
+	// Detect macOS native fullscreen to switch tab-bar padding.
+	// CSS `display-mode: fullscreen` does NOT fire for native macOS fullscreen.
+	// We use Tauri's window resize event + a short delay so isFullscreen()
+	// is queried after the transition has settled (avoids stale values).
+	let isFullscreen = $state(false);
+
 	onMount(() => {
 		if (browser) {
 			const saved = localStorage.getItem('sessionViewMode');
@@ -47,6 +56,32 @@
 				isCompact = true;
 			}
 		}
+
+		if (!isTauri()) return;
+
+		let unlisten: (() => void) | null = null;
+		let timer: ReturnType<typeof setTimeout> | null = null;
+
+		(async () => {
+			const { getCurrentWindow } = await import('@tauri-apps/api/window');
+			const win = getCurrentWindow();
+
+			// Check once on mount
+			isFullscreen = await win.isFullscreen();
+
+			// Re-check after every resize with a delay so the transition settles
+			unlisten = await win.onResized(async () => {
+				if (timer) clearTimeout(timer);
+				timer = setTimeout(async () => {
+					isFullscreen = await win.isFullscreen();
+				}, 150);
+			});
+		})();
+
+		return () => {
+			unlisten?.();
+			if (timer) clearTimeout(timer);
+		};
 	});
 
 	$effect(() => {
@@ -225,8 +260,38 @@
 	<ConnectionScreen onconnected={() => (needsConnection = false)} />
 {:else}
 <div class="dashboard">
-	<div class="window-drag-handle" data-tauri-drag-region></div>
+	<div class="tab-bar" class:fullscreen={isFullscreen} data-tauri-drag-region>
+		<button
+			class="tab-btn"
+			class:active={activeTab === 'monitor'}
+			onclick={() => (activeTab = 'monitor')}
+		>
+			<span class="tab-icon">■</span>
+			<span class="tab-label">MONITOR</span>
+		</button>
+		<button
+			class="tab-btn"
+			class:active={activeTab === 'history'}
+			onclick={() => (activeTab = 'history')}
+		>
+			<span class="tab-icon">⌕</span>
+			<span class="tab-label">HISTORY</span>
+		</button>
+		<!-- Drag handle: fills remaining space. The grip dots are absolutely
+		     centered in the whole tab bar so they appear at the window midpoint.
+		     Hidden in fullscreen where window dragging is unavailable. -->
+		<div class="tab-drag-region" data-tauri-drag-region>
+			{#if !isFullscreen}
+				<span class="drag-dots" transition:fade={{ duration: 250 }}>⠿ ⠿ ⠿</span>
+			{/if}
+		</div>
+	</div>
 
+	{#if activeTab === 'history'}
+	<main class="grid-container history-main">
+		<SessionHistory />
+	</main>
+	{:else}
 	<main class="grid-container">
 		<div class="sections-container">
 			<section class="system-section">
@@ -463,6 +528,7 @@
 			{/if}
 		</div>
 	</main>
+	{/if}
 
 	{#if expandedSession}
 		<ExpandedCardOverlay
@@ -492,18 +558,98 @@
 		background: var(--bg-base);
 	}
 
-	.window-drag-handle {
+	.tab-bar {
 		height: 28px;
 		width: 100%;
 		flex-shrink: 0;
+		display: flex;
+		align-items: stretch;
 		background: transparent;
 		z-index: 1000;
+		position: relative;
+		/* Left padding clears the macOS traffic light buttons (~80px) on
+		   titleBarStyle: Overlay windows. Right padding matches. */
+		padding: 0 var(--space-md) 0 80px;
+		transition: padding-left 0.35s ease;
+	}
+
+	/* Fills the right portion of the tab bar — draggable window handle area.
+	   Must use -webkit-app-region: drag (not just data-tauri-drag-region attr)
+	   for Tauri to actually recognize the drag zone. */
+	.tab-drag-region {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		-webkit-app-region: drag;
+		cursor: grab;
+	}
+
+	/* Grip indicator — absolutely centered in the full window width.
+	   pointer-events: none so it never blocks tab button clicks. */
+	.drag-dots {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		font-size: 14px;
+		letter-spacing: 3px;
+		color: var(--text-muted);
+		opacity: 0.5;
+		user-select: none;
+		line-height: 1;
+		pointer-events: none;
+		transition: opacity var(--transition-fast);
+	}
+
+	.tab-drag-region:hover .drag-dots {
+		opacity: 0.85;
+	}
+
+	.tab-btn {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		padding: 0 var(--space-md);
+		background: transparent;
+		border: none;
+		border-bottom: 2px solid transparent;
+		color: var(--text-muted);
+		cursor: pointer;
+		font-family: var(--font-pixel);
+		font-size: 10px;
+		letter-spacing: 0.08em;
+		transition: color var(--transition-fast);
+		-webkit-app-region: no-drag;
+	}
+
+	.tab-btn:hover {
+		color: var(--text-secondary);
+	}
+
+	.tab-btn.active {
+		color: var(--text-primary);
+		border-bottom-color: var(--text-primary);
+	}
+
+	.tab-icon {
+		font-size: 8px;
+	}
+
+	.tab-label {
+		font-size: 10px;
 	}
 
 	.grid-container {
 		flex: 1;
 		overflow-y: auto;
 		padding: var(--space-xl);
+	}
+
+	.history-main {
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.sections-container {
@@ -846,9 +992,16 @@
 		flex: 1;
 	}
 
+	/* ── Fullscreen: align tab padding with content padding ────── */
+	/* In macOS native fullscreen the traffic lights are gone. Replace the
+	   80px clearance with var(--space-xl) to match the grid-container padding. */
+	.tab-bar.fullscreen {
+		padding-left: var(--space-xl);
+	}
+
 	/* ── Mobile Responsive ─────────────────────────────────────── */
 	@media (max-width: 768px) {
-		.window-drag-handle {
+		.tab-bar {
 			height: 0;
 			display: none;
 		}

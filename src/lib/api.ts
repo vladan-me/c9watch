@@ -5,7 +5,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
-import type { Session, Conversation } from './types';
+import type { Session, Conversation, HistoryEntry, DeepSearchHit } from './types';
 import { isDemoMode } from './demo';
 import { getDemoSessions, demoConversations } from './demo/data';
 import { wsClient, useWebSocket } from './ws';
@@ -87,4 +87,25 @@ export interface ServerInfo {
 
 export async function getServerInfo(): Promise<ServerInfo> {
 	return await invoke<ServerInfo>('get_server_info');
+}
+
+/**
+ * Get all inactive session history from ~/.claude/history.jsonl
+ * (Desktop/Tauri only — returns empty array on mobile/browser)
+ */
+export async function getSessionHistory(): Promise<HistoryEntry[]> {
+	if (get(isDemoMode)) return [];
+	if (useWebSocket()) return [];
+	return await invoke<HistoryEntry[]>('get_session_history');
+}
+
+/**
+ * Deep search session JSONL files for a query string.
+ * Returns session IDs of matching sessions.
+ * (Desktop/Tauri only — returns empty array on mobile/browser)
+ */
+export async function deepSearchSessions(query: string): Promise<DeepSearchHit[]> {
+	if (get(isDemoMode)) return [];
+	if (useWebSocket()) return [];
+	return await invoke<DeepSearchHit[]>('deep_search_sessions', { query });
 }

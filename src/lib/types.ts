@@ -85,3 +85,37 @@ export interface Conversation {
   /** Array of messages in chronological order */
   messages: Message[];
 }
+
+/**
+ * A single result from the deep search command.
+ * Contains the session ID and a short snippet from the matching message.
+ */
+export interface DeepSearchHit {
+  sessionId: string;
+  /** ~200-char snippet from the first matching message line, with '…' padding if truncated. */
+  snippet: string;
+}
+
+/**
+ * A single entry from ~/.claude/history.jsonl (deduplicated by sessionId)
+ */
+export interface HistoryEntry {
+  /** Session UUID */
+  sessionId: string;
+
+  /** The user's prompt text as displayed in Claude Code. May be an empty string. */
+  display: string;
+
+  /**
+   * Timestamp in milliseconds since epoch (raw integer from history.jsonl).
+   * Note: unlike other timestamps in this file which are ISO 8601 strings,
+   * this is a Unix-ms number matching the raw format Claude Code writes.
+   */
+  timestamp: number;
+
+  /** Full project path, e.g. /Users/you/Documents/GitHub/myproject */
+  project: string;
+
+  /** Last path segment of project, e.g. "myproject" */
+  projectName: string;
+}

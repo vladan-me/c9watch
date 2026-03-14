@@ -24,6 +24,9 @@
 	import SessionHistory from '$lib/components/SessionHistory.svelte';
 	import CostTracker from '$lib/components/CostTracker.svelte';
 	import MemoryViewer from '$lib/components/MemoryViewer.svelte';
+	import FdaBanner from '$lib/components/FdaBanner.svelte';
+	import DebugConsole from '$lib/components/DebugConsole.svelte';
+	import type { DetectionDiagnostics } from '$lib/types';
 
 	let demoActive = $derived($isDemoMode);
 	let showQRModal = $state(false);
@@ -41,6 +44,8 @@
 	let isCompact = $state(false);
 
 	let activeTab = $state<'monitor' | 'history' | 'cost' | 'memory'>('monitor');
+	let fdaLikelyNeeded = $state(false);
+	let showDebugConsole = $state(false);
 
 	// Detect macOS native fullscreen to switch tab-bar padding.
 	// CSS `display-mode: fullscreen` does NOT fire for native macOS fullscreen.
@@ -80,6 +85,15 @@
 				}, 150);
 			});
 		})();
+
+		// Listen for detection diagnostics (FDA banner)
+		if (isTauri()) {
+			import('@tauri-apps/api/event').then(({ listen }) => {
+				listen<DetectionDiagnostics>('diagnostic-update', (event) => {
+					fdaLikelyNeeded = event.payload.fdaLikelyNeeded;
+				});
+			});
+		}
 
 		return () => {
 			unlisten?.();
@@ -230,6 +244,14 @@
 		const tag = (e.target as HTMLElement)?.tagName;
 		if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
+		// Cmd+Shift+D → debug console (check shift first to avoid triggering demo toggle)
+		// On macOS, e.key is lowercase 'd' even with Shift held when Cmd is pressed
+		if ((e.key === 'd' || e.key === 'D') && e.shiftKey && (e.metaKey || e.ctrlKey)) {
+			e.preventDefault();
+			showDebugConsole = !showDebugConsole;
+			return;
+		}
+
 		if (e.key === 'd' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			toggleDemoMode();
@@ -263,6 +285,7 @@
 	<ConnectionScreen onconnected={() => (needsConnection = false)} />
 {:else}
 <div class="dashboard">
+	<FdaBanner {fdaLikelyNeeded} />
 	<div class="tab-bar" class:fullscreen={isFullscreen} data-tauri-drag-region>
 		<button
 			class="tab-btn"
@@ -572,6 +595,7 @@
 	{/if}
 
 	<ToastNotifications />
+	<DebugConsole visible={showDebugConsole} onclose={() => (showDebugConsole = false)} />
 </div>
 {/if}
 

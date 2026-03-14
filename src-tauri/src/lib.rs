@@ -11,6 +11,8 @@ pub mod auth;
 pub mod polling;
 #[cfg(not(mobile))]
 pub mod web_server;
+#[cfg(not(mobile))]
+pub mod debug_log;
 
 // Shared modules (types used by both desktop and mobile builds)
 pub mod session;
@@ -70,7 +72,7 @@ fn greet(name: &str) -> String {
 #[cfg(not(mobile))]
 #[tauri::command]
 async fn get_sessions() -> Result<Vec<Session>, String> {
-    polling::detect_and_enrich_sessions()
+    polling::detect_and_enrich_sessions().map(|(sessions, _)| sessions)
 }
 
 /// Core logic for getting conversation data (shared by Tauri command and WS handler)
@@ -170,7 +172,7 @@ async fn stop_session(app: AppHandle, pid: u32) -> Result<(), String> {
     stop_session_action(pid)?;
     std::thread::sleep(Duration::from_millis(300));
 
-    if let Ok(sessions) = detect_and_enrich_sessions() {
+    if let Ok((sessions, _)) = detect_and_enrich_sessions() {
         let _ = app.emit("sessions-updated", &sessions);
     }
     Ok(())
@@ -193,7 +195,7 @@ async fn rename_session(
     custom_titles.set(session_id, new_name);
     custom_titles.save()?;
 
-    if let Ok(sessions) = detect_and_enrich_sessions() {
+    if let Ok((sessions, _)) = detect_and_enrich_sessions() {
         let _ = app.emit("sessions-updated", &sessions);
     }
     Ok(())
@@ -255,6 +257,12 @@ async fn get_server_info(info: tauri::State<'_, ServerInfo>) -> Result<ServerInf
     })
 }
 
+#[cfg(not(mobile))]
+#[tauri::command]
+async fn get_debug_logs() -> Result<Vec<debug_log::LogEntry>, String> {
+    Ok(debug_log::get_logs())
+}
+
 // ── NSPanel definition for macOS popover ────────────────────────────
 #[cfg(target_os = "macos")]
 tauri_panel! {
@@ -298,9 +306,7 @@ pub fn run() {
             let ws_url = format!("ws://{}:{}/ws?token={}", local_ip, port, token);
             let http_url = format!("http://{}:{}/?token={}", local_ip, port, token);
 
-            eprintln!("\n[c9watch] Mobile connection ready");
-            eprintln!("[c9watch] Token: {}", token);
-            eprintln!("[c9watch] URL:   {}\n", http_url);
+            debug_log::log_info(&format!("Mobile connection ready — URL: {}", http_url));
             qr2term::print_qr(&http_url).ok();
             eprintln!();
 
@@ -345,7 +351,7 @@ pub fn run() {
             if let Some(popover) = app.get_webview_window("popover") {
                 match popover.to_panel::<PopoverPanel>() {
                     Err(e) => {
-                        eprintln!("[c9watch] Failed to convert popover to NSPanel: {e}. Fullscreen support unavailable.");
+                        debug_log::log_warn(&format!("Failed to convert popover to NSPanel: {e}. Fullscreen support unavailable."));
                         // Do not return early — tray icon setup must still proceed below.
                     }
                     Ok(panel) => {
@@ -484,7 +490,8 @@ pub fn run() {
             rename_session,
             get_terminal_title,
             show_main_window,
-            get_server_info
+            get_server_info,
+            get_debug_logs
         ]);
 
     // Mobile: minimal shell (all communication via WebSocket from the frontend)

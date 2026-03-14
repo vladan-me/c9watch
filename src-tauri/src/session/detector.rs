@@ -35,6 +35,15 @@ pub struct DetectedSession {
     pub project_name: String,
 }
 
+/// Diagnostics about the session detection process
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectionDiagnostics {
+    pub claude_processes_found: u32,
+    pub processes_with_cwd: u32,
+    pub fda_likely_needed: bool,
+}
+
 /// Session detector that finds running Claude processes and matches them to session files
 pub struct SessionDetector {
     system: System,
@@ -61,7 +70,7 @@ impl SessionDetector {
     }
 
     /// Detects all active Claude Code sessions
-    pub fn detect_sessions(&mut self) -> Result<Vec<DetectedSession>, SessionDetectorError> {
+    pub fn detect_sessions(&mut self) -> Result<(Vec<DetectedSession>, DetectionDiagnostics), SessionDetectorError> {
         // Refresh process information (only what we need: name, cwd, start_time)
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
@@ -74,9 +83,17 @@ impl SessionDetector {
         // Find all running Claude processes
         let claude_processes = self.find_claude_processes();
 
+        let total = claude_processes.len() as u32;
+        let with_cwd = claude_processes.iter().filter(|p| p.cwd.is_some()).count() as u32;
+        let diagnostics = DetectionDiagnostics {
+            claude_processes_found: total,
+            processes_with_cwd: with_cwd,
+            fda_likely_needed: total > 0 && with_cwd == 0,
+        };
+
         // If no Claude processes are running, return empty
         if claude_processes.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), diagnostics));
         }
 
         // Get all session project directories
@@ -86,7 +103,7 @@ impl SessionDetector {
         // and associate them with running processes
         let sessions = self.find_active_sessions(&claude_processes, &project_dirs);
 
-        Ok(sessions)
+        Ok((sessions, diagnostics))
     }
 
     /// Find sessions that are likely active based on running process count
@@ -190,9 +207,9 @@ impl SessionDetector {
                 None => continue, // Skip processes without cwd
             };
 
-            // Encode the process cwd for matching
+            // Encode the process cwd for matching against Claude's project directory names.
             let cwd_str = proc_cwd.to_string_lossy();
-            let encoded_cwd = cwd_str.replace(['/', '_', '.'], "-");
+            let encoded_cwd = encode_path_for_matching(&cwd_str);
 
             // Helper closure to check if a session matches the process path
             let path_matches =
@@ -265,6 +282,11 @@ impl SessionDetector {
                         project_name: project_name.clone(),
                     });
                 }
+            } else {
+                crate::debug_log::log_warn(&format!(
+                    "PID={}: no matching session found for cwd={}",
+                    proc.pid, proc_cwd.display()
+                ));
             }
         }
 
@@ -371,6 +393,14 @@ impl Default for SessionDetector {
     }
 }
 
+/// Encodes a path the same way Claude Code does for its project directory names:
+/// every non-alphanumeric character is replaced with a dash.
+pub(crate) fn encode_path_for_matching(path: &str) -> String {
+    path.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
 /// Internal representation of a Claude process
 #[derive(Debug, Clone)]
 struct ClaudeProcess {
@@ -434,5 +464,29 @@ mod tests {
         if let Ok(dirs) = result {
             println!("Found {} project directories", dirs.len());
         }
+    }
+
+    #[test]
+    fn test_encode_path_for_matching() {
+        // Must match Claude Code's encoding: replace every non-alphanumeric char with '-'.
+        assert_eq!(
+            encode_path_for_matching("/Users/Name/My_Project"),
+            "-Users-Name-My-Project"
+        );
+        // Dots in paths (hidden dirs) become dashes
+        assert_eq!(
+            encode_path_for_matching("/Users/Name/.config/project"),
+            "-Users-Name--config-project"
+        );
+        // Spaces become dashes
+        assert_eq!(
+            encode_path_for_matching("/Users/Name/My Project"),
+            "-Users-Name-My-Project"
+        );
+        // Dots in project names
+        assert_eq!(
+            encode_path_for_matching("/Users/Name/project.v2"),
+            "-Users-Name-project-v2"
+        );
     }
 }

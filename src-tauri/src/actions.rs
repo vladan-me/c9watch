@@ -176,14 +176,15 @@ fn focus_iterm2_session(pid: u32) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn focus_jetbrains_window(app_name: &str, project_path: &str) -> Result<(), String> {
     let scheme = jetbrains_url_scheme(app_name);
+    let root = find_jetbrains_project_root(project_path);
 
     crate::debug_log::log_info(&format!(
-        "[open_session] JetBrains URL scheme: {}://open?file={}",
-        scheme, project_path
+        "[open_session] JetBrains URL scheme: {}://open?file={} (from: {})",
+        scheme, root, project_path
     ));
 
     // Percent-encode the path so spaces and special characters don't break the URL
-    let encoded_path = encode_path_for_url(project_path);
+    let encoded_path = encode_path_for_url(&root);
     let url = format!("{}://open?file={}", scheme, encoded_path);
     let output = Command::new("open")
         .arg(&url)
@@ -290,13 +291,14 @@ fn activate_app_fallback(app_name: &str) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn focus_jetbrains_window(app_name: &str, project_path: &str) -> Result<(), String> {
     let scheme = jetbrains_url_scheme(app_name);
+    let root = find_jetbrains_project_root(project_path);
 
     crate::debug_log::log_info(&format!(
-        "[open_session] JetBrains URL scheme (Linux): {}://open?file={}",
-        scheme, project_path
+        "[open_session] JetBrains URL scheme (Linux): {}://open?file={} (from: {})",
+        scheme, root, project_path
     ));
 
-    let encoded_path = encode_path_for_url(project_path);
+    let encoded_path = encode_path_for_url(&root);
     let url = format!("{}://open?file={}", scheme, encoded_path);
     let output = Command::new("xdg-open")
         .arg(&url)
@@ -390,6 +392,27 @@ fn encode_path_for_url(path: &str) -> String {
             _ => c.to_string(),
         })
         .collect()
+}
+
+/// Walk up from a directory to find the JetBrains project root (contains `.idea/`).
+///
+/// When a Claude session starts in a subfolder (e.g., `/monorepo/backend`),
+/// the actual JetBrains project root may be an ancestor containing `.idea/`.
+/// In monorepos, multiple directories may have `.idea/`, so we use the topmost
+/// one to match the root project that JetBrains has open.
+/// Returns the original path if no `.idea/` is found.
+fn find_jetbrains_project_root(path: &str) -> String {
+    let mut current = std::path::PathBuf::from(path);
+    let mut topmost: Option<String> = None;
+    loop {
+        if current.join(".idea").is_dir() {
+            topmost = Some(current.to_string_lossy().to_string());
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    topmost.unwrap_or_else(|| path.to_string())
 }
 
 /// Map JetBrains IDE app names to their registered URL scheme
@@ -1148,6 +1171,15 @@ mod tests {
         assert_eq!(encode_path_for_url("/Users/John Smith/My Project"), "/Users/John%20Smith/My%20Project");
         assert_eq!(encode_path_for_url("/path/with#hash"), "/path/with%23hash");
         assert_eq!(encode_path_for_url("/path/with&amp"), "/path/with%26amp");
+    }
+
+    #[test]
+    fn test_find_jetbrains_project_root() {
+        // No .idea anywhere — returns original path
+        assert_eq!(find_jetbrains_project_root("/tmp/nonexistent/sub"), "/tmp/nonexistent/sub");
+
+        // Root path — returns as-is
+        assert_eq!(find_jetbrains_project_root("/"), "/");
     }
 
     #[test]

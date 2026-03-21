@@ -25,6 +25,11 @@ pub fn open_session(pid: u32, project_path: String) -> Result<(), String> {
         return focus_iterm2_session(pid);
     }
 
+    // JetBrains IDEs: use URL scheme to focus the correct project window
+    if is_jetbrains_ide(&app_name) {
+        return focus_jetbrains_window(&app_name, &project_path);
+    }
+
     // Try to use app-specific CLI to open/focus the correct window
     if let Some(cli_path) = get_app_cli(&app_name) {
         crate::debug_log::log_info(&format!(
@@ -162,6 +167,40 @@ fn focus_iterm2_session(pid: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Focus the correct JetBrains IDE project window using the IDE's URL scheme
+///
+/// JetBrains IDEs register custom URL schemes (e.g., phpstorm://, idea://) that
+/// can open files and focus the correct project window. Using `open` with
+/// `{scheme}://open?file={project_path}` brings the right window to front
+/// without requiring Accessibility or Screen Recording permissions.
+#[cfg(target_os = "macos")]
+fn focus_jetbrains_window(app_name: &str, project_path: &str) -> Result<(), String> {
+    let scheme = jetbrains_url_scheme(app_name);
+
+    crate::debug_log::log_info(&format!(
+        "[open_session] JetBrains URL scheme: {}://open?file={}",
+        scheme, project_path
+    ));
+
+    // Percent-encode the path so spaces and special characters don't break the URL
+    let encoded_path = encode_path_for_url(project_path);
+    let url = format!("{}://open?file={}", scheme, encoded_path);
+    let output = Command::new("open")
+        .arg(&url)
+        .output()
+        .map_err(|e| format!("Failed to open JetBrains URL: {}", e))?;
+
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        crate::debug_log::log_error(&format!("[open_session] URL scheme failed: {}", error));
+        // Fall back to just activating the app
+        return activate_app_fallback(app_name);
+    }
+
+    crate::debug_log::log_info("[open_session] JetBrains URL scheme succeeded");
+    Ok(())
+}
+
 /// Get the iTerm2 session title for a process by matching its tty
 #[cfg(target_os = "macos")]
 pub fn get_iterm2_session_title(pid: u32) -> Option<String> {
@@ -247,6 +286,33 @@ fn activate_app_fallback(app_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Focus the correct JetBrains IDE project window using the IDE's URL scheme (Linux)
+#[cfg(target_os = "linux")]
+fn focus_jetbrains_window(app_name: &str, project_path: &str) -> Result<(), String> {
+    let scheme = jetbrains_url_scheme(app_name);
+
+    crate::debug_log::log_info(&format!(
+        "[open_session] JetBrains URL scheme (Linux): {}://open?file={}",
+        scheme, project_path
+    ));
+
+    let encoded_path = encode_path_for_url(project_path);
+    let url = format!("{}://open?file={}", scheme, encoded_path);
+    let output = Command::new("xdg-open")
+        .arg(&url)
+        .output()
+        .map_err(|e| format!("Failed to open JetBrains URL: {}", e))?;
+
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        crate::debug_log::log_error(&format!("[open_session] URL scheme failed: {}", error));
+        return activate_app_fallback(app_name);
+    }
+
+    crate::debug_log::log_info("[open_session] JetBrains URL scheme succeeded");
+    Ok(())
+}
+
 /// Linux fallback: try xdg-open or xdotool to raise window
 #[cfg(target_os = "linux")]
 fn activate_app_fallback(app_name: &str) -> Result<(), String> {
@@ -305,6 +371,45 @@ fn activate_app_fallback(app_name: &str) -> Result<(), String> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn activate_app_fallback(_app_name: &str) -> Result<(), String> {
     Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn focus_jetbrains_window(_app_name: &str, _project_path: &str) -> Result<(), String> {
+    Ok(())
+}
+
+/// Percent-encode a file path for use in a URL query parameter
+fn encode_path_for_url(path: &str) -> String {
+    path.chars()
+        .map(|c| match c {
+            ' ' => "%20".to_string(),
+            '#' => "%23".to_string(),
+            '%' => "%25".to_string(),
+            '&' => "%26".to_string(),
+            '?' => "%3F".to_string(),
+            _ => c.to_string(),
+        })
+        .collect()
+}
+
+/// Map JetBrains IDE app names to their registered URL scheme
+fn jetbrains_url_scheme(app_name: &str) -> &'static str {
+    match app_name {
+        "PhpStorm" => "phpstorm",
+        "IntelliJ IDEA" | "IntelliJ IDEA CE" => "idea",
+        "WebStorm" => "webstorm",
+        "PyCharm" | "PyCharm CE" => "pycharm",
+        "GoLand" => "goland",
+        "CLion" => "clion",
+        "Rider" => "rider",
+        "RubyMine" => "rubymine",
+        "DataGrip" => "datagrip",
+        "Android Studio" => "studio",
+        "Aqua" => "aqua",
+        "Fleet" => "fleet",
+        "RustRover" => "rustrover",
+        _ => "idea", // safe fallback
+    }
 }
 
 /// Get the JetBrains Toolbox scripts directory
@@ -756,6 +861,28 @@ fn get_app_name(comm: &str) -> Option<&'static str> {
     }
 }
 
+/// Returns true if the app_name is a JetBrains IDE
+fn is_jetbrains_ide(app_name: &str) -> bool {
+    matches!(
+        app_name,
+        "PhpStorm"
+            | "IntelliJ IDEA"
+            | "IntelliJ IDEA CE"
+            | "WebStorm"
+            | "PyCharm"
+            | "PyCharm CE"
+            | "GoLand"
+            | "CLion"
+            | "Rider"
+            | "RubyMine"
+            | "DataGrip"
+            | "Android Studio"
+            | "Aqua"
+            | "Fleet"
+            | "RustRover"
+    )
+}
+
 /// Stop a session by sending SIGTERM to the process
 ///
 /// This gracefully terminates the Claude process by sending a SIGTERM signal.
@@ -988,6 +1115,58 @@ mod tests {
             get_app_name("/Applications/PyCharm.app/Contents/MacOS/pycharm"),
             Some("PyCharm")
         );
+    }
+
+    #[test]
+    fn test_is_jetbrains_ide() {
+        assert!(is_jetbrains_ide("PhpStorm"));
+        assert!(is_jetbrains_ide("IntelliJ IDEA"));
+        assert!(is_jetbrains_ide("IntelliJ IDEA CE"));
+        assert!(is_jetbrains_ide("WebStorm"));
+        assert!(is_jetbrains_ide("PyCharm"));
+        assert!(is_jetbrains_ide("PyCharm CE"));
+        assert!(is_jetbrains_ide("GoLand"));
+        assert!(is_jetbrains_ide("CLion"));
+        assert!(is_jetbrains_ide("Rider"));
+        assert!(is_jetbrains_ide("RubyMine"));
+        assert!(is_jetbrains_ide("DataGrip"));
+        assert!(is_jetbrains_ide("Android Studio"));
+        assert!(is_jetbrains_ide("Aqua"));
+        assert!(is_jetbrains_ide("Fleet"));
+        assert!(is_jetbrains_ide("RustRover"));
+
+        assert!(!is_jetbrains_ide("Visual Studio Code"));
+        assert!(!is_jetbrains_ide("Cursor"));
+        assert!(!is_jetbrains_ide("Zed"));
+        assert!(!is_jetbrains_ide("iTerm"));
+        assert!(!is_jetbrains_ide("Terminal"));
+    }
+
+    #[test]
+    fn test_encode_path_for_url() {
+        assert_eq!(encode_path_for_url("/Users/foo/project"), "/Users/foo/project");
+        assert_eq!(encode_path_for_url("/Users/John Smith/My Project"), "/Users/John%20Smith/My%20Project");
+        assert_eq!(encode_path_for_url("/path/with#hash"), "/path/with%23hash");
+        assert_eq!(encode_path_for_url("/path/with&amp"), "/path/with%26amp");
+    }
+
+    #[test]
+    fn test_jetbrains_url_scheme() {
+        assert_eq!(jetbrains_url_scheme("PhpStorm"), "phpstorm");
+        assert_eq!(jetbrains_url_scheme("IntelliJ IDEA"), "idea");
+        assert_eq!(jetbrains_url_scheme("IntelliJ IDEA CE"), "idea");
+        assert_eq!(jetbrains_url_scheme("WebStorm"), "webstorm");
+        assert_eq!(jetbrains_url_scheme("PyCharm"), "pycharm");
+        assert_eq!(jetbrains_url_scheme("PyCharm CE"), "pycharm");
+        assert_eq!(jetbrains_url_scheme("GoLand"), "goland");
+        assert_eq!(jetbrains_url_scheme("CLion"), "clion");
+        assert_eq!(jetbrains_url_scheme("Rider"), "rider");
+        assert_eq!(jetbrains_url_scheme("RubyMine"), "rubymine");
+        assert_eq!(jetbrains_url_scheme("DataGrip"), "datagrip");
+        assert_eq!(jetbrains_url_scheme("Android Studio"), "studio");
+        assert_eq!(jetbrains_url_scheme("Aqua"), "aqua");
+        assert_eq!(jetbrains_url_scheme("Fleet"), "fleet");
+        assert_eq!(jetbrains_url_scheme("RustRover"), "rustrover");
     }
 
     #[cfg(target_os = "macos")]

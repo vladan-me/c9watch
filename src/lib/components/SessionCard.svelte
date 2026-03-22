@@ -304,7 +304,7 @@
 	}
 
 	.card-main-title {
-		font-family: var(--font-pixel);
+		font-family: var(--font-sans);
 		font-size: 15px;
 		font-weight: 600;
 		color: var(--text-primary);
@@ -312,7 +312,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		letter-spacing: 0.05em;
-		text-transform: uppercase;
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
 		line-clamp: 2;

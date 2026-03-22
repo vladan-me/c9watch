@@ -279,7 +279,7 @@
 						aria-label={collapsedProjects.has(group.project) ? 'Expand group' : 'Collapse group'}
 					>
 						<span class="collapse-toggle" aria-hidden="true">{collapsedProjects.has(group.project) ? '▶' : '▼'}</span>
-						<span class="group-name">{group.projectName.toUpperCase()}</span>
+						<span class="group-name">{group.projectName}</span>
 						<span class="group-count">{group.entries.length}</span>
 					</div>
 					{#if !collapsedProjects.has(group.project)}
@@ -308,7 +308,7 @@
 					<span class="row-number">{i + 1}</span>
 					<div class="row-content">
 						<div class="row-top">
-							<span class="row-project">{entry.projectName.toUpperCase()}</span>
+							<span class="row-project">{entry.projectName}</span>
 							<span class="row-meta">
 								{#if activeSessionIds.has(entry.sessionId)}<span class="active-badge">ACTIVE</span>{/if}
 								<span class="row-time">{relativeTime(entry.timestamp)}</span>
@@ -442,11 +442,11 @@
 	}
 
 	.row-project {
-		font-family: var(--font-pixel);
-		font-size: 12px;
+		font-family: var(--font-sans);
+		font-size: 13px;
 		font-weight: 600;
 		color: var(--text-primary);
-		letter-spacing: 0.1em;
+		letter-spacing: 0.05em;
 	}
 
 	.row-meta {
@@ -519,7 +519,7 @@
 	}
 
 	.group-name {
-		font-family: var(--font-pixel);
+		font-family: var(--font-sans);
 		font-size: 16px;
 		color: var(--text-primary);
 		letter-spacing: 0.1em;

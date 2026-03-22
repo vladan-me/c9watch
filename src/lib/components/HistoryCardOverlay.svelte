@@ -155,7 +155,7 @@
 				<div class="header-left" data-tauri-drag-region>
 					<div class="header-info">
 						<div class="header-title">
-							<h2 id="overlay-title" class="project-name">{entry.projectName.toUpperCase()}</h2>
+							<h2 id="overlay-title" class="project-name">{entry.projectName}</h2>
 						</div>
 						<div class="header-meta">
 							<span class="message-count">{#if conversation && conversation.messages.length > BATCH_SIZE}{sw.startIndex + 1}–{sw.endIndex} / {/if}{conversation?.messages.length ?? 0} messages</span>
@@ -353,12 +353,11 @@
 	}
 
 	.project-name {
-		font-family: var(--font-pixel);
+		font-family: var(--font-sans);
 		font-size: 16px;
 		font-weight: 600;
 		color: var(--text-primary);
 		margin: 0;
-		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		overflow: hidden;
 		text-overflow: ellipsis;
